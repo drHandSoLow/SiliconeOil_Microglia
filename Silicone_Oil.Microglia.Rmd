@@ -1,0 +1,486 @@
+---
+title: "SiliconeOil.Microglia.1w"
+author: "mphambinh"
+date: "2023.11.30"
+output: output_format
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 0. Shortcuts making your life easier (for Mac)
+Option + '-'    : <- 
+Cmd + Return    : Run the highlighted command
+Cmd + Shift + M : %>% 
+ 
+# 1. Set up your working directory 
+Use the command below to set up your working directory. The location you saved your datasets is preferred.
+```{r}
+rm(list=ls())
+# Enter your working directory in to the double bracket ""
+knitr::opts_knit$set(root.dir = '/Users/mphambinh/Desktop/SiliconeOil_Project.Microglia/') 
+```
+
+# 2. Set up the Seurat Objects
+Active the required package
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+install.packages('Seurat', repos = c('https://satijalab.r-universe.dev', 'https://cloud.r-project.org'))
+library(SeuratData)
+library(patchwork)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(gridExtra)
+BiocManager::install("scater")
+library(scater)
+library(Seurat)
+library(tibble)
+library(dplyr)
+BiocManager::install("GenomicFeatures")
+library(GenomicFeatures)
+library(ggplot2)
+library(gplots)
+library(patchwork)
+library(here)
+library(cowplot)
+#library(monocle3)
+library(devtools)
+library(Matrix)
+library(RColorBrewer)
+install.packages("openxlsx")
+library(openxlsx)
+library(tidyr)
+library(plotly)
+library(stringr)
+library(gridExtra)
+library(htmlwidgets)
+library(cowplot)
+library(htmltools)
+install.packages('varSelRF')
+library(varSelRF)
+library(quantmod)
+library(GGally)
+library(readr)
+library(purrr)
+library(fs)
+library(sctransform)
+install.packages("ggpubr")
+library(ggpubr)
+library(DoubletFinder)
+remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
+library(DoubletFinder)
+# # install glmGamPoi
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install("glmGamPoi")
+# # install sctransform from Github
+# install.packages("sctransform")
+library(sctransform)
+library(glmGamPoi)
+```
+More libraries
+```{r}
+library(tidyverse)
+library(cowplot)
+BiocManager::install("edgeR")
+devtools::install_url("https://cran.r-project.org/src/contrib/Archive/Matrix.utils/Matrix.utils_0.9.7.tar.gz")
+library(Matrix.utils)
+library(edgeR)
+library(Matrix)
+library(reshape2)
+library(S4Vectors)
+library(SingleCellExperiment)
+library(pheatmap)
+BiocManager::install("apeglm")
+library(apeglm)
+library(png)
+BiocManager::install("DESeq2")
+library(DESeq2)
+library(RColorBrewer)
+library(data.table)
+
+```
+
+# 3. Load datasets
+```{r}
+#Load dataset
+data_location = '/Users/mphambinh/Desktop/SiliconeOil_Project.Microglia/SO1W'
+# change the variable data_location to where you save the Cellranger outputs
+dirs <- list.dirs(path = data_location, recursive = F, full.names = F)
+# get data location 
+for(x in dirs){
+  name <- gsub('_filtered_feature_bc_matrix','', x)
+  cts <- ReadMtx(mtx = paste0(data_location,"/",x,'/matrix.mtx.gz'),
+                 features = paste0(data_location,"/",x,'/features.tsv.gz'),
+                 cells = paste0(data_location,"/",x,'/barcodes.tsv.gz'))
+  # create seurat objects
+  assign(name, CreateSeuratObject(counts = cts
+                                  , min.cells = 3 #Only genes/features detected in at least 3 cells will be kept
+                                  , min.features=200 #Only cells having at least 200 genes/features will be kept 
+  ))}
+#Read more : https://www.sciencedirect.com/science/article/pii/S1074761319300731?ref=pdf_download&fr=RR-2&rr=80afafa79d64079a#sec4
+
+#Create universal objects to work with
+ctrl <- SO1WCtrl
+exp <-  SO1WExp
+```
+# 4.Create a joint dataset for multiple group 
+```{r}
+SO1W <- merge(ctrl, exp,
+      add.cell.ids = c("ctrl", "exp"),
+      project = 'SiliconeOil1Week')
+
+# create a identity column
+SO1W$group <- rownames(SO1W@meta.data)
+
+# split sample column
+SO1W@meta.data <- separate(SO1W@meta.data, 
+                                    col = 'group', 
+                                    into = c('Group', 'Barcode'), sep = '_')
+View(SO1W@meta.data)
+```
+
+# 5.QC
+## 5.1. QC for a list of Seurat objects
+```{r}
+# SO1W.list <- SplitObject(SO1W, split.by = "Group")
+# SO1W.list
+# #prolif.score = c('pbk', 'birc5a','mki67', 'ube2c', 'top2a', 'tk1', 'aurkb', 'cdkn3', 'cenpf', 'cdk1',"pcna","tubb2b")
+# SO1W.list<- lapply(SO1W.list, FUN = function(x) {n
+#   x = PercentageFeatureSet(x, pattern = "^mt-", col.name = "percent.mt")
+#   x = PercentageFeatureSet(x, pattern = "^Rpl|^Rps", col.name = "percent.ribo")
+#   #x = PercentageFeatureSet(x, features = prolif.score, col.name = "prolif.score")
+# })
+```
+
+
+## 5.2.1 QC for a merged seurat object
+```{r}
+# mitopchondria percent
+SO1W[["percent.mt"]]<- PercentageFeatureSet(SO1W, pattern = "^mt-")
+# ribosome percent
+SO1W[["percent.ribo"]] <- PercentageFeatureSet(SO1W, pattern = "^Rpl|^Rps")
+# cell cycling score
+# need to normalize the dataset first
+# SO1W$old.indent <- SO1W$orig.ident
+# View(SO1W@meta.data)
+# s.genes <- str_to_title(cc.genes$s.genes)
+# g2m.genes <- str_to_title(cc.genes$g2m.genes)
+# SO1W <- CellCycleScoring(SO1W, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+```
+
+## 5.2.2 Visualizing QC metrics
+```{r}
+QC.before.integrate<- VlnPlot(SO1W, 
+        features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.ribo"),
+        ncol = 2)&
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(size = 12, angle = 90, hjust=0.5))
+ggplot2::ggsave("QC.before.integrate.jpeg",
+                QC.before.integrate,
+                width = 12,
+                height=10)
+SO1W
+```
+# 6.Filtering
+```{r}
+SO1w.fil <-  subset(SO1W, subset=
+                     nCount_RNA > 1000 & 
+                     nFeature_RNA > 250 &
+                     nCount_RNA < 50000 &
+                     #log10(nFeature_RNA) / log10(nCount_RNA) > 0.76 &
+                     percent.mt < 15 
+                   )
+SO1w.fil
+```
+# 7.Normalization with SCT
+```{r}
+# Low resolution
+SO1W.fil.normalized = SCTransform(SO1w.fil, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.3, verbose = FALSE)
+## Visualize low clustering results
+p1 <- DimPlot(SO1W.fil.normalized, label = T, repel = T) + ggtitle("Unsupervised clustering")
+p2 <- DimPlot(SO1W.fil.normalized, group.by = "Group") + ggtitle("Clustering by group")
+ggplot2::ggsave("clustering.SO1W.fil.normalized.jpeg",
+                plot=p1,
+                width=10,
+                height=8)
+ggplot2::ggsave("clustering.by.group.SO1W.fil.normalized.jpeg",
+                plot=p2,
+                width=10,
+                height=8)
+
+# High resolution
+ggplot2::ggsave("clustering.SO1W.fil.normalized.jpeg",
+                plot=p1,
+                width=10,
+                height=8)
+
+ggplot2::ggsave("clustering.by.group.SO1W.fil.normalized.jpeg",
+                plot=p2,
+                width=10,
+                height=8)
+
+p1|p2
+SO1W.fil.normalized
+SO1W.fil.normalized.list <- SplitObject(SO1W.fil.normalized, split.by = "Group")
+SO1W.fil.normalized.list
+```
+# 8. Integration 
+```{r}
+features = SelectIntegrationFeatures(object.list = SO1W.fil.normalized.list, nfeatures = 3000)
+SO1W.fil.normalized.list = PrepSCTIntegration(object.list = SO1W.fil.normalized.list, anchor.features = features)
+anchors = FindIntegrationAnchors(object.list = SO1W.fil.normalized.list, normalization.method = "SCT", anchor.features = features)
+SO1W.combined = IntegrateData(anchorset = anchors, normalization.method = "SCT")
+```
+# 9.Clustering
+```{r}
+SO1W.combined = RunPCA(SO1W.combined, verbose = FALSE)
+SO1W.combined = RunUMAP(SO1W.combined, reduction = "pca", dims = 1:35, verbose = FALSE)
+SO1W.combined = FindNeighbors(SO1W.combined, reduction = "pca", dims = 1:35)
+SO1W.combined = FindClusters(SO1W.combined, resolution = 0.1)
+```
+Visualization 
+```{r}
+
+DimPlot(SO1W.combined, reduction = "umap", label=TRUE, split.by= "Group", pt.size=1)+ NoLegend()
+p4<- DimPlot(SO1W.combined, reduction = "umap", label=TRUE, group.by="seurat_clusters")
+p3<-DimPlot(SO1W.combined, reduction = "umap", label=TRUE, group.by="Group")
+ggplot2::ggsave("clustering.by.group.SO1W.combined.jpeg",
+                plot=p3,
+                width=10,
+                height=8)
+ggplot2::ggsave("clustering.SO1W.combined.jpeg",
+                plot=p4,
+                width=10,
+                height=8)
+
+```
+
+# Color
+```{r}
+mycolor = c("#9ecae1","#c6dbef","#fee8c8","#fcc5c0","#d0d1e6","#fed976","#9e9ac8","#6baed6","#ccece6","#d4b9da","#7bccc4","#ccebc5","#fa9fb5","#feb24c","#fd8d3c","plum","lightskyblue")
+mycolor = colorRampPalette(c("lightcoral","wheat1","plum","khaki1","lightskyblue"), bias = 2)(28)
+mycolor = c("#E64B35B2","#F39B7FB2","#4DBBD5B2")
+gg_color_hue <- function(n) {
+  hues = seq(0, 1000, length = n + 1)
+  hcl(h = hues, l = 80, c = 40)[1:n]
+}
+mycolor = c("#ccece6","#99d8c9","#66c2a4","#41ae76","#bfd3e6","#9ebcda","#8c96c6","#8c6bb1","#ccebc5","#a8ddb5","#7bccc4","#4eb3d3","#d0d1e6","#a6bddb","#74a9cf","#3690c0","#fde0dd","#fcc5c0","#fa9fb5","#c994c7","#d4b9da","#c7e9b4","#7fcdbb","#41b6c4","#edf8b1","#ffeda0","#fed976","#feb24c","#fd8d3c","#fee8c8","#fdd49e","#fdbb84","#fc8d59","#fec44f","#fe9929","#c6dbef","#9ecae1","#6baed6","#4292c6","#fcbba1","#fc9272","#9e9ac8","#bcbddc","#d9d9d9","#00AFBB")
+```
+
+# 10. Proportion change 
+```{r}
+SO1W.combined$active.ident <- Idents(SO1W.combined)
+View(SO1W.combined@meta.data)
+number <- group_by(SO1W.combined@meta.data, Group, active.ident) %>% 
+  summarise(count = n()) %>%
+  group_by(Group)%>%
+  mutate(freq = count/sum(count)*100)
+#check
+number
+#plot cell composition change
+  cell_proportion<- ggplot(number, aes(Group, freq, fill = active.ident, width=0.5), label = Cluster) + 
+  geom_bar(stat = 'identity', colour="white", alpha=1, linewidth=0.5,position = 'stack') +
+  geom_text(aes(label = round(freq,1)), position = position_stack(vjust = 0.5))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_pubclean() +
+  theme(legend.position="right")
+  cell_proportion
+# plot cluster occupancy of each group ( i.e. control and experimental)
+number1 <- group_by(SO1W.combined@meta.data, Group, active.ident) %>% 
+  summarise(count = n()) %>%
+  group_by(Group)%>%
+  mutate(perc = round(count/sum(count), 2),
+         pos = cumsum(perc) - 0.5*perc)
+number1
+cluster.occupancy.plot <- ggplot(number1,aes(x = factor(active.ident), fill = factor(Group), y = perc)) + 
+geom_col(position = 'fill') +
+geom_text(aes(label = paste0(perc*100,"%")), 
+            position = position_fill(vjust = 0.5), 
+            size = 3) +
+labs(fill = 'Group', x = 'Cluster') +
+scale_y_continuous(limits = c(0,1))
+
+
+
+# save the plots
+ggplot2::ggsave("cluster.occupancy.jpeg",
+                plot=cluster.occupancy.plot,
+                width=10,
+                height=8) 
+ggplot2::ggsave("cell.proportion.jpeg",
+                plot=cell_proportion,
+                width=10,
+                height=8) 
+
+```
+
+
+# 11. Annotation 
+```{r}
+peripheral_macrophage_and_monocyte_marker=c("Ms4a7","Emilin2","Gda", "Hp","Sell")
+print(peripheral_macrophage_and_monocyte_marker)
+```
+
+Visualize all the clusters we got so far
+```{r}
+DimPlot(SO1W.combined, split.by = "Group" ,reduction = "umap")
+```
+Name the clusters"
+```{r}
+new.cluster.ids <- c("MG0",
+                     "MG1",
+                     "MG2", 
+                     "MG3", 
+                     "Photoreceptors",
+                     "Proliferating microglia", 
+                     "Monocytes/Macrophages")
+names(new.cluster.ids) <- levels(SO1W.combined)
+
+SO1W.combined <- RenameIdents(SO1W.combined, new.cluster.ids)
+DimPlot(SO1W.combined, reduction = "umap",label.size=3,label = TRUE, pt.size = 0.1)
+```
+
+Find markers for : 
+
+1. For one cluster:  
+```{r}
+cluster0.marker <- FindMarkers(SO1W.combined, ident.1 = 0, min.pct = 0.25 )
+head(cluster0.marker, n=10)
+VlnPlot(SO1W.combined, features = c(row.names(cluster0.marker)[1], row.names(cluster0.marker)[2], row.names(cluster0.marker)[3]), pt.size=0.01)
+```
+
+```{r}
+cluster5.marker <- FindMarkers(SO1W.combined, ident.1 = 5, min.pct = 0.25 )
+head(cluster5.marker, n=10)
+VlnPlot(SO1W.combined, features = c(row.names(cluster5.marker)[1], row.names(cluster5.marker)[2], row.names(cluster5.marker)[3]), pt.size=0.01)
+```
+
+2. For all clusters ( each cluster compared to all remaining clusters): 
+```{r}
+SO.markers <- FindAllMarkers(SO1W.combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+
+3. Use reference to define cell-type specific markers.
+### Reference
+```{r}
+#myeloid cells
+myeloid_markers = c("Ccr2", "Lyve1","Mgl2","H2-Aa", "F13a1","Mrc1", "Lyz2")
+myeloid_featureplot <-FeaturePlot(SO1W.combined, features = myeloid_markers, pt.size = 0.1, label = TRUE)
+myeloid_violinplot <-VlnPlot(SO1W.combined, features = myeloid_markers, pt.size = 0.1)
+ggsave("myeloid_featureplot.jpeg", myeloid_featureplot)
+ggsave("myeloid_violinplot.jpeg", myeloid_violinplot)
+#microglia 
+microglia_markers= c("Fcrls", "P2ry12", "Cx3cr1", "Trem2", "C1qa")
+microglia_featureplot <-FeaturePlot(SO1W.combined, features = microglia_markers, pt.size = 0.1, label = TRUE)
+microglia_violinplot <-VlnPlot(SO1W.combined, features = microglia_markers, pt.size = 0.1)
+ggsave("microglia_featureplot.jpeg", microglia_featureplot)
+ggsave("microglia_violin.jpeg", microglia_violinplot)
+#photoreceptors 
+photoreceptor_markers= c("Rcvrn", "Pde6g", "Rho")
+photoreceptor_featureplot <-FeaturePlot(SO1W.combined, features = photoreceptor_markers, pt.size = 0.1, label = TRUE)
+photoreceptor_violin <-VlnPlot(SO1W.combined, features = photoreceptor_markers, pt.size = 0.1)
+ggsave("photoreceptor_featureplot.jpeg", photoreceptor_featureplot)
+ggsave("photoreceptor_violin.jpeg", photoreceptor_violin)
+
+#resting microglia
+resting_markers= c("Lag3", "Egr1", "Ifrd1")
+resting_featureplot <-FeaturePlot(SO1W.combined, features = resting_markers, pt.size = 0.1, label = TRUE)
+resting_violin <-VlnPlot(SO1W.combined, features = resting_markers, pt.size = 0.1)
+ggsave("resting_featureplot.jpeg", resting_featureplot)
+ggsave("resting_violin.jpeg", resting_violin)
+```
+
+```{r}
+proliferating_markers = c("Mki67","Bub1","Pcna")
+proliferating_featureplot <- FeaturePlot(SO1W.combined, features = proliferating_markers, pt.size = 0.1, label = TRUE)
+proliferating_violinplot <- VlnPlot(SO1W.combined, features = proliferating_markers, pt.size = 0.1)
+ggsave("proliferating_featureplot.jpeg", proliferating_featureplot) 
+ggsave("proliferating_violinplot.jpeg", proliferating_violinplot) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# DE Analysis
+Pseudobulk analysis 
+```{r}
+
+SO1W.combined.metadata <- SO1W.combined@meta.data
+assay(SO1W.combined.metadata)
+cluster_names <- levels(colData(SO1W.combined.metadata)$active.ident)
+cluster_names
+```
+
+
+
+
+#find marker genes
+```{r}
+SO1W.combined<- PrepSCTFindMarkers(SO1W.combined)
+
+SO1W.combined.markers <- FindAllMarkers(SO1W.combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+SO1W.combined.markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 2, order_by = avg_log2FC)
+DEG = subset(SO1W.combined.markers, avg_log2FC > 0.5 & p_val_adj < 0.05)
+
+# for one specific subgroup
+View(SO1W.combined@meta.data)
+DE_group4<-FindMarkers(SO1W.combined,group.by = "",subset.ident=4, ident.1="ctrl", ident.2="exp")
+write.xlsx(DEG,file = 'marker.group4.xlsx',rowNames=T)
+```
+
+
+
+# Testing
+```{r}
+phagocytosis_related = c("Cd68", "Bin1", "Cd33", "Picalm", "Sorl1" )
+spp1_receptor= c("Spp1","Itgb1", "Itgb5", "Ncstn", "Itgav", "Itgb3", "Ccr5", "Ccnd1")
+actin_filament_polymerization=c("Kank2", "Twf1")
+complement_receptor=c("Cr3")
+mechanosensing_related=c("Piezo1","Trpv1","Trpv2", "Trpv4", "Trpm2", "Trpm4", "Trpm7", "Trpc3" )
+###
+featureplot.microglia<- FeaturePlot(SO1W.combined, features = c(),pt.size=0.1, ncol=2)
+vlnplot.microglia<- VlnPlot(SO1W.combined, features = spp1_receptor, ncol=2, pt.size=0.1)
+vlnplot.microglia<- VlnPlot(SO1W.combined, features = "Ccl5", ncol=2, pt.size=0.1)
+vlnplot.complement <- VlnPlot(SO1W.combined, features=complement_receptor, ncol=2, pt.size = 0.1)
+vlnplot.mechanosensing <- VlnPlot(SO1W.combined, features= mechanosensing_related, ncol = 2, pt.size = 0.1)
+
+vlnplot.phagocytosis <- VlnPlot(SO1W.combined, features= phagocytosis_related, ncol = 2, pt.size = 0.1)
+###
+ggsave("microglia.marker.feature.jpeg", featureplot.microglia)
+ggsave("microglia.marker.vln.jpeg",vlnplot.microglia, width=10)
+ggsave("microglia.mechanosensing.jpeg", vlnplot.mechanosensing, width =12)
+ggsave("microglia.phagocytosis.jpeg", vlnplot.phagocytosis, width =12)
+VlnPlot(SO1W.combined, features=peripheral_macrophage_and_monocyte_marker, pt.size=0.1, ncol=2)
+```
+
